@@ -219,8 +219,8 @@ console.log('实际执行传入的函数func----', `参数：${params[0]}、${pa
  * underscore throttle 实现
  * @param func 要节流的函数
  * @param wait 需要delay执行的时间
- * @param options 配置项：options.leading设置"节流前缘(leading edge)"，默认第一次尝试调用的 func 会被立即执行，若设置为false，第一次调用也必须等待 wait 时间后才会执行func。
- *                       options.trailing设置"节流后缘(trailing edge)"，默认会在持续触发结束后，再调用一次 func , 若设置为false，在上一次执行func和下一次即将执行func时间内发生的触发，都不会再执行func。
+ * @param options 配置项：options.leading设置"节流前缘(leading edge)"
+ *                  options.trailing设置"节流后缘(trailing edge)"
  * @returns {*}
  */
 _.throttle = function(func, wait, options) {
@@ -229,7 +229,7 @@ _.throttle = function(func, wait, options) {
   if (!options) options = {};
 
   var later = function() {
-    // 根据options.leading的值重设previous，以保证本次持续触发结束后的下一次触发，是否需要立即执行
+    // 根据options.leading的值重设previous,当options.leading === false时候，设置previous为0，确保在下一次执行时，满足!previous && options.leading === false，将previous设置为当前时间，不会立即执行。
     previous = options.leading === false ? 0 : _.now();
     timeout = null;
     result = func.apply(context, args);
@@ -237,17 +237,18 @@ _.throttle = function(func, wait, options) {
   };
 
   var throttled = function() {
-    console.log('input触发：', arguments, format(+new Date()))
+    // console.log('input触发：', arguments, format(+new Date()))
     // 保存当前的时间戳
     var now = _.now();
-    // 第一次执行时，previous为0，!previous为true
+    // 第一次执行，以及在延迟执行later中，满足设置options.leading为false的情况下，previous为0，!previous为true
     // 如果设置了{ options.leading: false }, 将previous设置为当前时间
     if (!previous && options.leading === false) previous = now;
-    // 为了计算持续触发函数的时间间隔与设定时间间隔
+    // 计算remaining，用来确定是否可满足立即执行的条件，以及持续触发函数执行的延迟时间
     var remaining = wait - (now - previous);
     context = this;
     args = arguments;
     if (remaining <= 0 || remaining > wait) {
+      // 采用时间戳的方式，通过计算remaining，判断是否应立即执行func
       // 若有 timeout 存在，则取消计时
       if (timeout) {
         clearTimeout(timeout);
@@ -261,7 +262,7 @@ _.throttle = function(func, wait, options) {
       if (!timeout) context = args = null;
     } else if (!timeout && options.trailing !== false) {
       // 在开启options.trailing的模式下，在remaining时间后延迟执行func，可以理解为：执行该次func的时间点是上一次执行func时间 + wait
-      // 可以进入该分支的触发，都不满足remaining <= 0 || remaining > wait，即当前的触发并不满足可以直接立即执行 func 的条件，需要延迟执行。
+      // 可以进入该分支的触发，都不满足remaining <= 0 || remaining > wait，即当前的触发并不满足可以直接立即执行 func 的条件，延迟执行。
       timeout = setTimeout(later, remaining);
     }
     return result;
@@ -275,12 +276,15 @@ _.throttle = function(func, wait, options) {
 
   return throttled;
 };
-
-通过一个流程图，表示throttle的实现效果：
 ```
-如果觉得源码在没有上下文的情况下晦涩难懂，可以结合以下例子理解。
+以上提到了关键的配置options：
+  - `options.leading` 设置是否开启"节流前缘(leading edge)"，默认第一次调用 `func` 会立即执行，若设置为 `false`，第一次调用也必须等待 `wait` 时间后才会执行 。
+  - `options.trailing` 设置是否开启"节流后缘(trailing edge)"，默认会在持续触发结束后，再调用一次 `func` , 若设置为 `false`，在上一次执行和下一次即将执行 `func` 时间内发生的触发，都不会再执行 `func`。
 
-采用如下方式调用_.throttle方法：
+通过一个流程图，表示 `throttle` 的实现效果：
+
+
+在例子中，所设定的wait时间间隔是4s。用一个例子看一下_.throttle的执行：
 ```
 let throttleInput = document.getElementById('throttle')
 let options = {
@@ -296,17 +300,26 @@ function ajax(...params) {
 }
 
 ```
-1. 未设置leading和trailing
+以下组合options的四种情况：
+
+1. **支持立即执行和延迟执行**：未设置leading和trailing
+
 效果：第一次触发，立即执行。此后，若触发时间与上一次触发时间的差值大于wait，则立即执行，否则，延后执行，执行时间是：上一次执行func的时间+wait。
 ![image](https://raw.githubusercontent.com/hu0950/material-management/master/throttle/throttle_result1.png)
-2. trailing:false
+
+2. **关闭延时执行**：设置trailing:false
+
 效果：第一次触发，立即执行。此后，若触发时间与上一次触发时间的差值大于wait，则立即执行，否则，不执行。
 ![image](https://github.com/hu0950/material-management/blob/master/throttle/throttle-result2.png)
-3. 3. 两个为false(关闭立即和延时执行)
-效果：第一次触发，不立即执行，并将该次触发时间赋值给previous，标记为已执行。此后每次的触发时间与previous的差值，若大于wait，则执行func，否则，不执行。当执行func时，会更新previous，再次通过以上规则进行比较，推测何时可执行func，以此类推。
+
+3. **关闭立即和延时执行**：都为false
+
+效果：第一次触发，不立即执行，并将本次触发时间赋值给previous，标记为已执行。此后，每次的触发时间与previous的差值，若大于wait，则执行func，否则，不执行。当执行func时，会更新previous，再次通过以上规则进行比较，计算何时可执行func，以此类推。
 ![image](https://github.com/hu0950/material-management/blob/master/throttle/throttle-result3.png)
-4. leading为false
-效果：第一次触发，不立即执行。此后触发，延迟执行func，执行时间是：上一次执行结束后的第一轮触发时间+wait。
+
+4. **关闭立即执行**：设置leading为false
+
+效果：第一次触发，不立即执行。此后触发，延迟执行func，执行时间是：上一次执行结束后的第一次触发时间+wait。
 ![image](https://github.com/hu0950/material-management/blob/master/throttle/throttle-result4.png)
 
 是否设置options.leading = false ？
@@ -322,9 +335,9 @@ function ajax(...params) {
 
 // 否：在上一次执行func和下一次即将执行func之间所发生的触发结束后，都不会再执行func。
 
-### 适用场景
+### 应用场景
 
-这两种方法都是为了限制执行调用的频率，那如何区别在某种场景中，应该要使用何种方法？
+防抖和节流都是为了限制执行调用的频率，那如何区别在某种场景中，应该要使用何种方法？
 
 > 首先，需要明确的是：debounce的作用是为了降低连续执行调用的次数。
 
