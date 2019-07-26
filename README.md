@@ -74,7 +74,6 @@ function throttle(fn, delay) {
   }
 }
 ```
-TODO: 图
 
 2. 时间戳
 ```
@@ -91,7 +90,6 @@ function throttle(fn, delay) {
   }
 }
 ```
-TODO: 图
 
 ### `underscore`实现防抖和节流的源码分析
 (备注：以下源码的分析，依赖的是underscore 1.9.1)
@@ -174,7 +172,7 @@ _.delay = restArguments(function(func, wait, args) {
   });
 ```
 通过一个流程图，表示debounce的实现效果：（以下图表示一次持续过程的触发，每次持续触发，重复此流程）
-![image](https://raw.githubusercontent.com/hu0950/material-management/master/debounce/underscore_debounce_flow.png)
+![image](https://raw.githubusercontent.com/hu0950/material-management/master/debounce/underscore-flow-chart.png)
 
 #### immediate为true
     1. 在触发_.debounce后，会立即执行函数func
@@ -243,7 +241,7 @@ _.throttle = function(func, wait, options) {
     // 第一次执行，以及在延迟执行later中，满足设置options.leading为false的情况下，previous为0，!previous为true
     // 如果设置了{ options.leading: false }, 将previous设置为当前时间
     if (!previous && options.leading === false) previous = now;
-    // 计算remaining，用来确定是否可满足立即执行的条件，以及持续触发函数执行的延迟时间
+    // 计算remaining，用来确定是否可满足立即执行的条件，以及计算持续触发函数执行的延迟时间
     var remaining = wait - (now - previous);
     context = this;
     args = arguments;
@@ -261,8 +259,9 @@ _.throttle = function(func, wait, options) {
       // 再次检查 timeout，因为 func 执行期间可能有新的 timeout 被设置，如果 timeout 被清空了，代表不再有等待执行的 func，也清空 context 和 args
       if (!timeout) context = args = null;
     } else if (!timeout && options.trailing !== false) {
-      // 在开启options.trailing的模式下，在remaining时间后延迟执行func，可以理解为：执行该次func的时间点是上一次执行func时间 + wait
+      // 采用定时器的方式，延迟执行回调
       // 可以进入该分支的触发，都不满足remaining <= 0 || remaining > wait，即当前的触发并不满足可以直接立即执行 func 的条件，延迟执行。
+      // 在开启options.trailing的模式下，在remaining时间后延迟执行func，可以理解为：执行func时间点是上一次执行时间 + wait
       timeout = setTimeout(later, remaining);
     }
     return result;
@@ -282,7 +281,12 @@ _.throttle = function(func, wait, options) {
   - `options.trailing` 设置是否开启"节流后缘(trailing edge)"，默认会在持续触发结束后，再调用一次 `func` , 若设置为 `false`，在上一次执行和下一次即将执行 `func` 时间内发生的触发，都不会再执行 `func`。
 
 通过一个流程图，表示 `throttle` 的实现效果：
+![image](https://raw.githubusercontent.com/hu0950/material-management/master/throttle/underscore_throttle_flow.png)
 
+这里，需要注意的是：
+1. previous记录的是上一次的执行时间
+2. func延迟执行，执行时间是：上一次执行时间（previous）+ 设置的wait时间
+3. 满足立即执行的条件，即要满足：remaining <= 0 || remaining > wait，也就是当设置options.leading:false时的首次触发，和触发时间距上一次执行时间大于wait时，满足上述条件
 
 在例子中，所设定的wait时间间隔是4s。用一个例子看一下_.throttle的执行：
 ```
@@ -300,7 +304,7 @@ function ajax(...params) {
 }
 
 ```
-以下组合options的四种情况：
+以下options组合的四种情况：
 
 1. **支持立即执行和延迟执行**：未设置leading和trailing
 
@@ -321,19 +325,6 @@ function ajax(...params) {
 
 效果：第一次触发，不立即执行。此后触发，延迟执行func，执行时间是：上一次执行结束后的第一次触发时间+wait。
 ![image](https://github.com/hu0950/material-management/blob/master/throttle/throttle-result4.png)
-
-是否设置options.leading = false ？
-// 若是: 第一次触发不执行func。设置previous = now，是为了标志此轮已执行过，并使remaining = wait，因不满足执行func的条件。
-
-// 若否: 第一次触发执行func。该次触发时，previous = 0, 满足remaining（等于 wait - (now - previous)） <= 0 的条件，符合执行func的条件。
-
-// 包括第二次在内之后且不是最后一次的触发，若持续触发函数的时间间隔大于设定时间间隔wait（满足remaining > wait），则执行func；反之，则该次触发不执行func。
-
-// 是否设置options.trailing = false ?
-
-// 是：在上一次执行func和下一次即将执行func之间所发生的触发结束后，再调用一次 func
-
-// 否：在上一次执行func和下一次即将执行func之间所发生的触发结束后，都不会再执行func。
 
 ### 应用场景
 
