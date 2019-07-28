@@ -1,13 +1,14 @@
+## 再一次理解防抖和节流原理与实现
 ### 前言
 
-> 本文先会从基础概念、实现方法入手，在此基础上，分析underscore的源码，探究其实现细节以及达到的效果，以便在今后的应用中，可以根据业务需求，来设计与实现适合需求场景的防抖和节流方案。最后，总结了一些防抖与节流常用的场景。
+> 本文会先从基础概念、实现方法入手，在此基础上，分析underscore的源码，探究其实现细节以及达到的效果，以便在今后的应用中，可以根据业务需求，来设计与定制适合需求场景的防抖和节流方案。最后，总结了一些防抖与节流常用的场景。
 
-在日常开发中，会常遇到用户高频触发事件的操作，然而，这些高频率的触发，会带来一系列显而易见的问题，例如：
+在日常开发中，常遇到用户高频触发事件的操作，然而，这些高频率的触发，会带来一系列显而易见的问题，例如：
 1. 事件触发的回调函数中，包含着比较复杂的处理逻辑，需要较多的运算时间和资源，会导致浏览器响应速度跟不上触发频率，页面会出现卡顿或假死的现象。
 2. 高频事件的触发，往往存在着大量的DOM操作，会导致重排和重绘的触发频率过高，从而造成页面性能过度损耗以及 `CPU` 使用率过高，严重的会导致页面崩溃。
-3. 每一次的事件触发，往往都代表需要和服务器建立一次http请求，而高频的触发，会在短时间内发起了数十次甚至上百次的请求，假设服务器没有设置限流的策略，必会给服务端带来很大的压力，造成服务器资源的浪费。
+3. 每一次的事件触发，往往都代表需要和服务器建立一次或多次http请求，而高频的触发，会在短时间内发起了数十次甚至上百次的请求，假设服务器没有设置限流的策略，必会给服务端带来很大的压力，造成服务器资源的浪费。
 
-针对以上的问题，很多请求是不需要实时响应的，为了节省不必要的请求资源，可以采用防抖和节流两种方案来进行优化，从而达到在可高频触发场景中，控制事件回调函数执行的频次。
+针对以上的问题，其实很多请求是不需要实时响应的，为了节省不必要的请求资源，可以采用防抖和节流两种方案来进行优化，从而达到在高频触发场景中，控制事件回调函数执行的频次。
 
 ### 什么是防抖和节流？
 防抖：降低连续执行调用的次数，将频繁的事件合成一次执行。
@@ -18,7 +19,7 @@
 
 #### 1）防抖
 
-> 实现思路：利用定时器计时的原理，在设定的等待时间内，若再次有触发，则计时器清零，开始重新计时，直到上一次结束触发后的等待时间内，没有新的触发，才会执行调用。
+> 实现思路：利用定时器计时，在设定的等待时间内，若再次有触发，则计时器清零，开始重新计时，直到上一次结束触发后的等待时间内，没有新的触发，才会执行调用。
 
 1. 非立即执行：第一次事件触发，并不会立即执行，包含第一次触发在内的所有触发，都需要等到delay时间之后再执行
 ```
@@ -107,8 +108,8 @@ _.debounce = function(func, wait, immediate) {
     var timeout, result;
     var later = function(context, args) {
       timeout = null;
-       // if (args)的判断，是为了过滤立即执行函数（设置immediate为true）的情况
-       // 立即函数执行的情况，setTimeout(later, wait)，没有给later函数传入args
+       // 立即函数执行（设置immediate为true），setTimeout(later, wait)，没有给later函数传入args
+       // if (args)的判断，是为了过滤立即执行函数的情况
       if (args) result = func.apply(context, args);
     };
 
@@ -119,13 +120,15 @@ _.debounce = function(func, wait, immediate) {
       if (timeout) clearTimeout(timeout);
       // 判断是否设置了immediate，即是否需要立即执行
       if (immediate) {
+        // 立即执行case
         var callNow = !timeout;
-        // timeout记录是否有计时器，目的是为了控制在wait时间内不执行func。在wait之后，执行later，目的是将timeout设置为null
+        // timeout目的是为了控制在wait时间内，不执行func。在wait之后，执行later，并不会再执行func，只是将timeout设置为null，等待下次立即触发执行func
         timeout = setTimeout(later, wait);
-        // 当满足第一次触发或是在持续触发的最后一次发生的wait时间的条件，timeout设为null，此后再触发时，立即执行回调函数
+        // timeout在第一次触发时，或是在持续触发的最后一次发生的wait时间后，满足为null的条件，callNow为true，该情况下的触发，会立即执行func
         if (callNow) result = func.apply(this, args);
       } else {
-        // 触发后需要等到达了设定的时间后，才会执行回调函数，在这个过程中如果发生持续触发，定时器的计时会重新开始计时，直到最后一次触发wait时间后，才会执行回调函数func
+        // 非立即执行case
+        // 触发后需要等到达了设定的时间后，才会执行回调函数，在这个过程中，如果发生持续触发，定时器的计时会重新开始计时，直到最后一次触发wait时间后，才会执行回调函数func
         timeout = _.delay(later, wait, this, args);
       }
       return result;
@@ -172,7 +175,7 @@ _.delay = restArguments(function(func, wait, args) {
   });
 ```
 通过一个流程图，表示debounce的实现效果：（以下图表示一次持续过程的触发，每次持续触发，重复此流程）
-![image](https://raw.githubusercontent.com/hu0950/material-management/master/debounce/underscore-flow-chart.png)
+![image](https://raw.githubusercontent.com/hu0950/material-management/master/throttle/underscore_debounce_flow.png)
 
 #### immediate为true
     1. 在触发_.debounce后，会立即执行函数func
@@ -218,7 +221,7 @@ console.log('实际执行传入的函数func----', `参数：${params[0]}、${pa
  * @param func 要节流的函数
  * @param wait 需要delay执行的时间
  * @param options 配置项：options.leading设置"节流前缘(leading edge)"
- *                  options.trailing设置"节流后缘(trailing edge)"
+ *                       options.trailing设置"节流后缘(trailing edge)"
  * @returns {*}
  */
 _.throttle = function(func, wait, options) {
@@ -227,7 +230,7 @@ _.throttle = function(func, wait, options) {
   if (!options) options = {};
 
   var later = function() {
-    // 根据options.leading的值重设previous,当options.leading === false时候，设置previous为0，确保在下一次执行时，满足!previous && options.leading === false，将previous设置为当前时间，不会立即执行。
+    // 根据options.leading的值重设previous，当options.leading === false时候，设置previous为0，确保在下一次执行时，满足!previous && options.leading === false，将previous设置为当前时间，不会立即执行。
     previous = options.leading === false ? 0 : _.now();
     timeout = null;
     result = func.apply(context, args);
@@ -238,13 +241,15 @@ _.throttle = function(func, wait, options) {
     // console.log('input触发：', arguments, format(+new Date()))
     // 保存当前的时间戳
     var now = _.now();
-    // 第一次执行，以及在延迟执行later中，满足设置options.leading为false的情况下，previous为0，!previous为true
-    // 如果设置了{ options.leading: false }, 将previous设置为当前时间
+
+    // 第一次执行，以及在延迟执行later中，满足设置options.leading为false的情况下，previous为0，!previous为true，将previous设置为当前时间
     if (!previous && options.leading === false) previous = now;
-    // 计算remaining，用来确定是否可满足立即执行的条件，以及计算持续触发函数执行的延迟时间
+
+    // 计算remaining，用来确定是否可满足立即执行的条件，以及计算持续触发函数延迟执行的时间
     var remaining = wait - (now - previous);
     context = this;
     args = arguments;
+
     if (remaining <= 0 || remaining > wait) {
       // 采用时间戳的方式，通过计算remaining，判断是否应立即执行func
       // 若有 timeout 存在，则取消计时
@@ -252,14 +257,16 @@ _.throttle = function(func, wait, options) {
         clearTimeout(timeout);
         timeout = null;
       }
-      // 记录已触发过的时间戳
+
+      // 记录已触发过的时间戳，每次赋值，无论是否已经执行func，都会表示为已执行过，并将previous作为上一次的执行时间
       previous = now;
       result = func.apply(context, args);
+
       // 由于变量都存在闭包中，垃圾回收机制无法回收，这里是为了清空数据，防止内存泄露
       // 再次检查 timeout，因为 func 执行期间可能有新的 timeout 被设置，如果 timeout 被清空了，代表不再有等待执行的 func，也清空 context 和 args
       if (!timeout) context = args = null;
     } else if (!timeout && options.trailing !== false) {
-      // 采用定时器的方式，延迟执行回调
+      // 采用定时器的方式，延迟执行func
       // 可以进入该分支的触发，都不满足remaining <= 0 || remaining > wait，即当前的触发并不满足可以直接立即执行 func 的条件，延迟执行。
       // 在开启options.trailing的模式下，在remaining时间后延迟执行func，可以理解为：执行func时间点是上一次执行时间 + wait
       timeout = setTimeout(later, remaining);
