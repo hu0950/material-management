@@ -1,0 +1,320 @@
+### 浅谈日历组件基础功能的实现
+
+#### 一、组件功能
+1.  设置时间的可选范围（min、max）， 组件默认展示最小日期所在月~最大日期所在月的所有时间
+2.  可控制是否组件提供的tip，tip的功能包括：提示选择终止时间以及已选的天数
+3.  支持可配置，是否默认滚动到设定max时间的位置（底部）
+4.  暴露完成选择、选择起始和终止时间的事件
+
+#### 二、设计思路与难点
+实现日历渲染的关键思想是**数据驱动**，即数据决定视图的展示，意味着我们可以**通过控制数据的变化，来控制日历的展示**。
+
+因此，可通过创建一个变量`dateList`，来存储着所有渲染日期信息的数据。换句话说，当我们将所有日期信息，按照相应的结构，正确地存储到`dateList`中，整个日历组件的渲染工作，就完成了很关键的一部分。
+
+接下来，将从如何确定`dateList`数据格式、渲染min ~ max时间范围的日历以及渲染日历选中的样式三个点，和大家一起探讨一下在实现日历组件基础功能的一些思路和实践。
+
+**1. 确定dateList数据格式**
+
+整个`dateList`，都是以月为维度进行存储的，其中的的每个item都是月份的日期信息，这样一来，好处是：前一年和后一年的末首月的数据，在`dateList`中的`index`是相邻的，很容易就能获取到，而不再受限于这两个月份是在不同的年，还需要通过遍历年才能获取。
+```
+// min->max范围内所有月份
+[
+  { 
+    title: '${year}年${month}月',
+    dayCount: days, // 该月天数
+    year: year,
+    month: month,
+    // 设置min时间所在月份
+    dateArr: [
+      // 第1周
+      [  [], [] , ..., [], []  ],
+      ...
+      // 第n周
+        [  [], [] , ..., [], []  ]
+      ]
+  },
+    ...
+  { 
+    title: '${year}年${month}月',
+    dayCount: days, // 该月天数
+    year: year,
+    month: month,
+    // 设置max时间所在月份
+    dateArr: [
+      // 第1周
+      [  [], [] , ..., [], []  ],
+      ...
+      // 第n周
+        [  [], [] , ..., [], []  ]
+      ]
+  }
+]
+```
+下面是日历渲染相关的主要html代码：
+```
+<div class="date-render-wrapper" v-for="(monthDateGroup, listIndex) in dateList" :key="listIndex">
+  <p class="date-header">{{monthDateGroup.title}}</p>
+  <ul class="date-ul" v-for="(days, weekInMonth) in monthDateGroup.dateArr" :key="weekInMonth">
+    <li
+      class="date-li"
+      v-for="(item, index) in days"
+      :key="index"
+      :class="[item.dateClass, {'disable': item.disable}, {'active': item.active}]"
+    >
+      <div class="date-left"></div>
+      <div class="date-center">
+        <div
+          class="date"
+          @click="selectDate(item, index, $event)"
+        >
+          {{item.day}}
+        </div>
+      </div>
+      <div class="date-right"></div>
+    </li>
+  </ul>
+</div>
+```
+
+**2. 渲染min ~ max时间范围的日历**
+
+基本思路：根据给定日期的区间范围，计算其中包含所有月日期，并以月为维度按序存入dateList。
+
+在这步中，我们要实现如下图的效果：
+
+ ![image](https://raw.githubusercontent.com/hu0950/material-management/master/assets/component/calendar-render.png)
+
+具体实现步骤可拆解为以下步骤：
+  - **根据传入prop值的最小时间和最大时间 -> 计算最小年月~最大年月范围中包含的所有月**
+  
+举个例子，要渲染2016-03-23 ~ 2018-05-03的日历，按年进行遍历，我们需要知道每一年我们需要遍历对的月份包括哪几个月。如果min和max日期是同一年，则应取min~max月；否则，如果该遍历的年是min日期所在年，则应取min日期所在月~12月；如果该年既不是min日期所在年，也不是max日期所在年，则取1月~12月；如果该遍历的年是max日期所在年，则应取1月~max月。根据以上规律，最终我们需要渲染的日期包括：2016年3月~12月，2017年1~12月，2018年1~5月的日期。
+```
+for (let year = minYear; year <= maxYear; year++) {
+  let monthLowerLimit = year === minYear ? minMonth : 1
+  let monthUpperLimit = year === maxYear ? maxMonth : 12
+  for (let month = monthLowerLimit; month <= monthUpperLimit; month++) {
+    this.dateList.push(this.getCurrentMonthDaysArray(year, month))
+  }
+}
+```
+  - **按月依次获取每个月的日期信息**
+  
+**首先，计算当月共包含的周数，初始化存储每周数据的数组**
+```
+let weeksCountInMonth = getWeeksCountInMonth(year, month)
+// 初始化二维数组
+let dayArrays = []
+for (let i = 0; i < weeksCountInMonth; i++) {
+  dayArrays[i] = []
+}
+```
+**其次，确定当月所有日期在日历面板的排列。**
+
+为此，我们需要计算出每个日期的信息，这些信息包括当月共有多少天、共包含的周数，以及每天在当月中的位置（即在当月的第几个星期和周几，可理解为在当月的横纵坐标），通过这些信息，就可以知道每个日期的属性，如：day、month、year、date、dayInWeek（每周有几天）、weekInMonth（每个月有几周）以及该日期的状态（disable、active等），从而存入相应所在周的数组。
+```
+ 	let days = getDaysCountInMonth(year, month)
+  // 当月日历面板中的排列
+  for (let day = 1; day <= days; day++) {
+    let currentWeekInMonth = getWeekInMonth(year, month, day)
+    daysArray[currentWeekInMonth - 1].push({
+      day,
+      month: month,
+      year: year,
+      date: new Date(year, month - 1, day),
+      dayInWeek: getDayInWeek(year, month, day),
+      weekInMonth: currentWeekInMonth - 1,
+      active: false,
+      disable: +new Date(year, month - 1, day) < +this.min || +new Date(year, month - 1, day) > +this.max
+    })
+  }
+}
+```
+  - **最后，补齐当月首末周**（补齐的方式有两种：用空日期或是相连月的时间进行补齐，该业务场景中，采用的是用空日期进行补齐）
+```
+fillDaysInMonth(year, month, days, weeksCountInMonth, daysArray) {
+  let firstDayInWeek = getDayInWeek(year, month, 1)
+  let lastDayInWeek = getDayInWeek(year, month, days)
+  if (firstDayInWeek !== 0) {
+    let fillArr = [...new Array(firstDayInWeek).fill({ date: '' })]
+    daysArray[0] = [...fillArr, ...daysArray[0]]
+  }
+  if (lastDayInWeek !== 6) {
+    let fillArr = [...new Array(6 - lastDayInWeek).fill({ date: '' })]
+    daysArray[weeksCountInMonth - 1] = [...daysArray[weeksCountInMonth - 1], ...fillArr]
+  }
+}
+```
+
+**3. 渲染选中的样式**
+
+一般日历组件，可提前设置选择一段连续时间或只能选择一个日期，由于目前业务场景中只需支持前者，可配置选用两者中的其一的功能，将放在后期拓展。
+例如，要实现以下效果：标记选择的起始和终止的日期，以及起始到终止范围内的所有日期。
+
+ ![image](https://raw.githubusercontent.com/hu0950/material-management/master/assets/component/seleceted-calendar.png)
+
+这个步骤中，将重点关注**数据`selectDateSet`**，它是用来存储已选的日期，通过它可获取已选择的日期信息等，可以方便我们在之后，可以很容易得统计已选择的天数。其次，**重点关注选择日期操作后，所获得的起始和终止日期。**
+
+接下来，我们**将通过改变在dateList中，起始日期-终止日期区间内所有日期的状态（这个状态指是：是否被选中的时间，以及是否是起始或结束时间），最终来达到可渲染选中日期样式的目的。**
+那么，可以注意到，如果解决了以下两个问题，我们想要实现的效果，也就迎刃而解。
+
+**一是如何在dateList中找出起始日期-终止日期区间内所有日期，并标记上相应的状态？**
+
+基本思路是：找到起始日期（startDate）和结束日期（endDate）位于`dateList`中的`index`，即根据`dateList[index]`就可获取相对应的月份信息 ；确定`startDate`和`endDate`分别在对应月中的位置信息，从`startDate`开始遍历，一直到endDate结束，给这个区间的日期元素增加相应的状态类。
+
+主要的实现代码如下：
+```
+selectDate(item, index, event) 
+  ...
+  // 选择开始时间
+  if (!this.selectDateSet.length) {
+    ...
+    this.selectDateSet.push(item)
+  } else {
+    // 选择结束时间
+    ...
+    // 给结束日期增加状态
+    item.dateClass = item.dateClass ? `${item.dateClass} end-date` : `end-date`
+  }
+ ...
+}
+renderSelectedRangeDate(startDateObj, endDateObj) {
+  let startDateWeekInMonth = startDateObj.weekInMonth
+  let endDateWeekInMonth = endDateObj.weekInMonth
+  let startDateInWeek = startDateObj.dayInWeek
+  let startMonthIndex = this.getMonthDateGroup(startDateObj.year, startDateObj.month).index
+  let endMonthIndex = this.getMonthDateGroup(endDateObj.year, endDateObj.month).index
+  let monthDateGroup
+
+  for (let currentMonthIndex = startMonthIndex; currentMonthIndex <= endMonthIndex; currentMonthIndex++) {
+    monthDateGroup = this.dateList[currentMonthIndex]
+
+    if (currentMonthIndex !== startMonthIndex) {
+      startDateInWeek = 0
+      startDateWeekInMonth = 0
+    } else {
+      startDateWeekInMonth = startDateObj.weekInMonth
+      startDateInWeek = startDateObj.dayInWeek
+    }
+    endDateWeekInMonth = currentMonthIndex !== endMonthIndex
+      ? monthDateGroup.dateArr.length - 1 // 取该月最后一周
+      : endDateObj.weekInMonth
+    this.renderDateInOneMonth(startDateInWeek, monthDateGroup, startDateWeekInMonth, endDateWeekInMonth, +endDateObj.date)
+  }
+  ...
+}
+renderDateInOneMonth(startDateInWeek, monthDateGroup, startDateWeekInMonth, endDateWeekInMonth, endDateTimestamp) {
+  let day = startDateInWeek
+  let rangeArr = []
+  let weekDateGroup
+  let dateClass
+
+  for (let week = startDateWeekInMonth; week <= endDateWeekInMonth; week++) {
+    weekDateGroup = monthDateGroup.dateArr[week]
+
+    for (day; day <= 7; day++) {
+      if (day === 7) {
+        day = 0
+        break
+      }
+
+      if (weekDateGroup[day].date === this.selectDateSet[0].date) {
+        this.$set(weekDateGroup[day], 'dateClass', 'start-date')
+      }
+      dateClass = weekDateGroup[day].dateClass && +weekDateGroup[day].date
+        ? `${weekDateGroup[day].dateClass} transition-date`
+        : `transition-date`
+      this.$set(weekDateGroup[day], 'dateClass', dateClass)
+      rangeArr.push(weekDateGroup[day])
+
+      if (+weekDateGroup[day].date >= endDateTimestamp) {
+        break
+      }
+    }
+  }
+  this.selectDateSet = [...this.selectDateSet, ...rangeArr]
+}
+```
+**二是如何控制不同状态的样式？**
+
+先来看一下html结构：
+```
+<li
+  class="date-li"
+  v-for="(item, index) in days"
+  :key="index"
+  :class="[item.dateClass, {'disable': item.disable}, {'active': item.active}]"
+>
+<div class="date-left"></div>
+<div class="date-center">
+  <div
+    class="date"
+    @click="selectDate(item, index, $event)"
+  >
+    {{item.day}}
+  </div>
+</div>
+<div class="date-right"></div>
+</li>
+```
+
+将日期元素li，划分为以下三部分：`.date-left`、`.date-center`、`.date-right`，用来控制浅色背景渲染，而`.date-center`中的`.date`是用来控制日期在选中状态（`.active`）下的圆角以及深蓝色颜色样式。
+
+ ![image](https://raw.githubusercontent.com/hu0950/material-management/master/assets/component/calendar-class.png)
+
+li上的class，体现的是这个**日期的状态**，一共有以下几种：
+  - `disable`：不可选
+  - `active`：点击选中样式（起始、结束时间）-> 该状态下的.date元素，用深色块标识已选中起始或终止时间
+  - `transition-date`：在选中范围内样式 
+  - `start-date`：控制起始日期块的左边缘圆角和`.date-left`、`.date-center`、`.date-right`元素的颜色
+  - `end-date`： 控制结束日期的右边缘圆角和`.date-left`、`.date-center`、`.date-right`元素的颜色
+`active`状态下的`.date`元素，用深色块标识已选中起始或终止时间。`transition-date`状态下的`.date-left`、`.date-center`、`.date-right`元素，都是浅色背景，用来标识连续选中的日期。
+
+需要注意的是：由于起始日期有“右连续”和终止日期有“左连续”的特点，我们需要对这两个日期进行特殊处理，分别增加start-date类和end-date状态来标识“起始”和“终止”，用于控制起始日期块的左边缘和结束日期的右边缘圆角，并通过覆盖样式的方式，对元素的相应位置，渲染白色背景。
+
+CSS实现如下：
+
+```
+.date-li
+  display flex
+  flex 1
+  justify-content center
+  height 34px
+  margin-bottom 12px
+  /*选中日期的背景*/
+  &.transition-date
+    .date-left,
+    .date-center,
+    .date-right
+      background #F1F3F7
+  /*起始日期*/
+  &.start-date
+    .date-left
+      background #FFF
+    .date-center
+      border-radius 6px 0 0 6px
+    .date-center,
+    .date-right
+      background #F1F3F7
+  /*结束日期*/
+  &.end-date
+    .date-center,
+    .date-left
+      background #F1F3F7
+    .date-center
+      border-radius 0 6px 6px 0
+    .date-right
+      background $rainbow-color-bg
+  /*点击选中的样式*/
+  &.active
+    .date
+      color #FFF
+      background-color #4D6199 // 深蓝色背景
+  &.disable
+    .date
+      color #969699
+```
+#### 三、总结
+以上所提及的思路或是实现方案，都只是日历组件实现中最基本的功能。在整个组件的设计中，还有很多需要考虑的细节，例如：如果用户选择的终止时间比起始时间小，怎样的交互才能使用户的体验更好，以及保证用户可以用最少的操作，就可选择一个正确的时间？对于数据结构的设计，每个日期应该包含哪些信息，才能在获取日期时，更方便地获取日期信息？满足已经选择了起始和终止时间，以及选择的结束时间小于开始时间的条件时，我们是否需要清除样式，并将selectDateSet.length设置为0，开始下一次的存储。
+
+此外，除了本文中所讲述到的基本功能，可拓展的功能还有很多，例如：支持可配置，只能选择一个日期，或者选择日期的区间；支持渲染初始值等等。
+
